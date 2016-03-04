@@ -4,22 +4,23 @@ Experimental sandbox for blockchain parsing / analytics. Early stage work in pro
 
 ## Sample output (minor manual formatting applied)
 
-  {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00000.dat open}
-  {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00000.dat closed}
-  {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00001.dat open}
-  {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00001.dat closed}
-  ...
-  {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00384.dat closed}
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00000.dat open}
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00000.dat closed}
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00001.dat open}
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00001.dat closed}
+    ...
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00384.dat open}
+    {/Users/Chris/Library/Application Support/Bitcoin/blocks/blk00384.dat closed}
 
-  Blocks processed: 386182
-  Blocks in main chain: 386162
-  ChainStats
-  { chainstatsNumBlocks = 386162
-  , chainstatsNumTxns = 94704517
-  , chainstatsMeanTxnsPerBlock = 245.24556274309745
-  , chainstatsMinTxnsPerBlock = Just 0
-  , chainstatsMaxTxnsPerBlock = Just 12238
-}
+    Blocks processed: 386182
+    Blocks in main chain: 386162
+    ChainStats
+    { chainstatsNumBlocks = 386162
+    , chainstatsNumTxns = 94704517
+    , chainstatsMeanTxnsPerBlock = 245.24556274309745
+    , chainstatsMinTxnsPerBlock = Just 0
+    , chainstatsMaxTxnsPerBlock = Just 12238
+    }
 
 ## To do
 
