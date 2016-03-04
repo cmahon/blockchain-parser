@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -19,6 +20,8 @@ import qualified Data.Map.Strict as Map
 import Data.HexString
 import Data.List
 import Data.Maybe
+import Data.Sequence (Seq,(<|))
+import qualified Data.Sequence as S
 import Lens.Family
 import Pipes
 import qualified Pipes.Binary as PB
@@ -86,8 +89,8 @@ blockFiles' bd = do
   let bfs = sort . filter (isPrefixOf "blk") $ fs
   return $ map (bd </>) bfs
 
-dataDir :: IO FilePath
-dataDir = case os of
+getDataDir :: IO FilePath
+getDataDir = case os of
   "mingw"   -> windows
   "mingw32" -> windows
   "mingw64" -> windows
@@ -161,8 +164,8 @@ type BlockMap a = Map.Map BlockHash (BlockRec a)
 
 data BlockDB a = BlockDB 
   { _blockdbMap  :: BlockMap a
-  , _blockdbHead :: Maybe (BlockRec a)
-  }
+  , _blockdbHead :: Maybe (BlockHash,BlockRec a)
+  } deriving Show
 
 newBlockDB :: BlockDB a
 newBlockDB = BlockDB
@@ -170,39 +173,68 @@ newBlockDB = BlockDB
   , _blockdbHead = Nothing
   }
 
-insertBlockDB :: BlockMap a -> (BlockHash,BlockHash,a) -> BlockMap a
-insertBlockDB bm (bh,ph,d) = 
+initBlockMap :: NFData a =>
+                FilePath ->
+                Maybe Int ->
+                (Block' -> a) ->
+                IO (BlockMap a)
+initBlockMap blksdir numblocks f = 
+  PS.runSafeT $ P.fold insertBlockMap Map.empty id $
+    block'P' blksdir
+    >-> P.map ((,,) <$> _block'Hash 
+                    <*> (_prevBlock . _blockHeader . _block'Block)
+                    <*> f)
+    >-> maybe cat P.take numblocks
+    >-> deepseqP
+
+insertBlockMap :: BlockMap a ->
+                  (BlockHash,BlockHash,a) ->
+                  BlockMap a
+insertBlockMap bm (bh,ph,d) = 
   let br = BlockRec Nothing ph Nothing d
   in  Map.insert bh br bm
 
-
-updateDepth :: BlockDB a -> BlockHash -> (BlockDB a,Int)
-updateDepth bdb bh =   
+updateBlockRec :: BlockDB a -> 
+                  BlockHash ->
+                  (BlockDB a,BlockRec a)
+updateBlockRec bdb bh =   
   let m          = _blockdbMap bdb
-      h          = _blockdbHead bdb
       Just r     = Map.lookup bh m
-      ph         = _blockrecPrevHash r
-      pr         = Map.lookup ph m
-      (d',r',m') = case pr of 
-        Nothing ->
-          let _d' = 0 
-              _r' = r { _blockrecDepth = Just _d' }
-          in  (_d',_r',m)
-        Just BlockRec{_blockrecDepth = Just d} ->
-          let _d' = d + 1
-              _r' = r { _blockrecDepth = Just _d' }
-          in  (_d',_r',m)
-        Just br ->
-          let (_bdb',_d) = updateDepth bdb ph
-              _m'        = _blockdbMap _bdb'
-              _d'        = _d + 1
-              _r'        = r { _blockrecDepth = Just _d' }
-          in  (_d',_r',_m')
-      m''        = Map.insert bh r' m'
-      h'         = Just $ maybe r' (maxBy _blockrecDepth r') h
-      bdb'       = BlockDB m'' h'
-  in  (bdb',d')
+  in  maybe (updateDepth bdb bh r) (const (bdb,r)) (_blockrecDepth r)
 
-updateDepth' :: BlockDB a -> BlockHash -> BlockDB a
-updateDepth' bdb = fst . updateDepth bdb
+updateBlockRec' :: BlockDB a -> BlockHash -> BlockDB a
+updateBlockRec' bdb = fst . updateBlockRec bdb
+
+updateDepth :: BlockDB a -> 
+               BlockHash ->
+               BlockRec a ->
+               (BlockDB a,BlockRec a)
+updateDepth bdb bh r = 
+  let m            = _blockdbMap bdb
+      ph           = _blockrecPrevHash r      
+      mpr          = Map.lookup ph m
+      (r',bdb') = case mpr of 
+        Nothing ->
+          let _r' = r { _blockrecDepth = Just 0
+                      , _blockrecPrevRec = Nothing }
+          in  (_r',bdb)
+        Just pr -> 
+          let (_bdb',pr') = maybe (updateBlockRec bdb ph) (const (bdb,pr)) (_blockrecDepth pr)
+              Just pd' = _blockrecDepth pr'
+              _r'      = r { _blockrecDepth = Just (pd' + 1)
+                           , _blockrecPrevRec = Just pr'}
+          in  (_r',_bdb')
+      m'           = _blockdbMap bdb'
+      m''          = Map.insert bh r' m'
+      hd'          = _blockdbHead bdb'
+      hd''         = Just $ maybe (bh,r') (maxBy (_blockrecDepth . snd)  (bh,r')) hd'
+      bdb''        = BlockDB m'' hd''
+  in  (bdb'',r')
+
+mainChain :: BlockDB a -> Seq (BlockRec a)
+mainChain BlockDB{ _blockdbHead = Nothing }    = S.empty
+mainChain BlockDB{ _blockdbHead = Just (_,h) } = go S.empty h
+ where
+  go c r@BlockRec{ _blockrecPrevRec = Nothing } = r <| c
+  go c r@BlockRec{ _blockrecPrevRec = Just p  } = go (r <| c) p
 
