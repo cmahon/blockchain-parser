@@ -1,79 +1,74 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
-import Control.Monad
-import Data.Bitcoin.Block
+import Control.DeepSeq
+import qualified Control.Foldl as L
 import qualified Data.Map.Strict as Map
-import Data.List
-import Data.Monoid
-import Options.Applicative
-import Pipes
-import qualified Pipes.Prelude as P
-import qualified Pipes.Safe as PS
-import Prelude hiding (readFile)
-import System.Directory
+import Data.Bitcoin.Block
+import Data.Foldable
+import GHC.Generics
+import System.Exit
+import Text.Printf
 
 import Bitcoin
-import PipesExtras
-
------------------------------------------------------------------------------
-
-data Options = Options
-  { _optionsDataDir :: Maybe String
-  , _optionsNetwork :: Network
-  }
-
-options :: Parser Options
-options = Options
-  <$> optional (strOption
-      ( long "datadir"
-        <> metavar "DATADIR"
-        <> help "Blockchain data directory" ))
-  <*> option auto
-      ( long "network"
-        <> short 'n'
-        <> metavar "NETWORK"
-        <> help "[BTCMain|BTCTest]"
-        <> value BTCMain)
+import Client
 
 -----------------------------------------------------------------------------
 
 main :: IO ()
-main = execParser opts >>= run
- where
-  opts = info (helper <*> options)
-              (fullDesc
-               <> progDesc "Parse the bitcoin blockchain"
-               <> header "blockchain parser")
+main = run analysis
 
 -----------------------------------------------------------------------------
 
-run :: Options -> IO ()
-run Options{..} = do
+analysis :: Options -> IO ()
+analysis Options{..} = do
 
-  dataPath <- case _optionsDataDir of
-    Nothing -> dataDir
-    Just d  -> doesDirectoryExist d >>= \case 
-      True  -> return d
-      False -> dataDir
+  dataDir <- updateDataDir _optionsDataDir >>= maybe exitFailure return
+  let blksDir = blocksDir _optionsNetwork dataDir
 
-  m <- PS.runSafeT $ P.fold insertBlockDB Map.empty id $
-      block'P' (blocksDir BTCMain dataPath)
-      >-> P.map ((,,) <$> _block'Hash 
-                      <*> (_prevBlock . _blockHeader . _block'Block)
-                      <*> const ())
-      >-> P.take 100000
-      >-> deepseqP
+  m <- initBlockMap blksDir Nothing extractBlockStats
+ 
+  let hs    = Map.keys m
+      bdb   = BlockDB m Nothing
+      bdb'  = foldl' updateBlockRec' bdb hs
+      chain = mainChain bdb'
+      stats = L.fold chainStatsFold chain
 
-  let hs       = Map.keys m
-      bdb      = BlockDB m Nothing
-      bdb' = foldl' updateDepth' bdb hs
+  printf "Blocks processed: %d\n" $ length hs
+  printf "Blocks in main chain: %d\n" $ length chain
+  print stats
 
-  print (length hs)
-  print $ _blockdbHead bdb'
+-----------------------------------------------------------------------------
+
+data BlockStats = BlockStats
+  { _blockstatsNumTxns :: Int
+  } deriving (Generic,Show)
+
+instance NFData BlockStats
+
+extractBlockStats :: Block' -> BlockStats
+extractBlockStats = BlockStats . length . _blockTxns . _block'Block
+
+data ChainStats = ChainStats
+  { chainstatsNumBlocks        :: Int
+  , chainstatsNumTxns          :: Int
+  , chainstatsMeanTxnsPerBlock :: Double
+  , chainstatsMinTxnsPerBlock  :: Maybe Int
+  , chainstatsMaxTxnsPerBlock  :: Maybe Int
+  } deriving Show
+
+chainStatsFold :: L.Fold (BlockRec BlockStats) ChainStats
+chainStatsFold = L.premap (_blockstatsNumTxns . _blockrecData) $ ChainStats
+  <$> L.length
+  <*> L.sum
+  <*> L.premap fromIntegral mean
+  <*> L.minimum
+  <*> L.maximum
+
+-----------------------------------------------------------------------------
+
+mean :: L.Fold Double Double
+mean = (/) <$> L.sum <*> L.genericLength
 
