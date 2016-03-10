@@ -24,12 +24,21 @@ Experimental sandbox for blockchain parsing / analytics. Early stage work in pro
 
 ## To do
 
-* Handle blocks padded with zeros (I think this is the reason it stopped at blk00384.dat)
-* Calc and output duration
+* Possible local block corruption: 8 byte sequence (comprising block marker and an incorrect block size) between 2 valid blocks in blk00384.dat. Try redownloading blocks.
+* Calc duration of analysis
 * Data structures - try hashmap, vector, etc.
 * Add stats requiring deeper interrogation of txns to check performance
+* Derive longest chain based on difficulty rather than depth
+* Command line parameters
+* Bundle a set of standard analyses
+* Charts
+* Factor out binary decoder pipe into a dedicated library
+* Rename PipesExtras
+* Transform and persist to a queryable data store
+* Add references to blockchain data format / parsing articles and related repos (e.g. Bitcoin wiki, Bitcoin.org dev ref, Znort, Radcliff, etc.)
 
 ## References/sources:
 
 * [BitD](https://github.com/benma/bitd)
 * [Haskoin](https://github.com/haskoin/haskoin)
+
