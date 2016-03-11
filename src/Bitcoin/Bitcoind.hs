@@ -1,23 +1,11 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
-
-module Bitcoin where
+module Bitcoin.Bitcoind where
 
 import Control.DeepSeq
 import Control.Monad
-import Data.Binary
-import Data.Binary.Get
-import Data.Binary.Put
 import Data.Bitcoin.Block
 import Data.Bitcoin.Types
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
-import Data.HexString
 import Data.List
 import Data.Maybe
 import Data.Sequence (Seq,(<|))
@@ -34,36 +22,9 @@ import System.FilePath
 import System.Info (os)
 import Text.Printf
 
-import PipesExtras
+import Bitcoin.Types
+import Types
 import Util
-
------------------------------------------------------------------------------
-
-instance NFData HexString where
-  rnf = rnf . toBytes
-
------------------------------------------------------------------------------
-
-data Network = 
-    BTCMain
-  | BTCTest
-    deriving (Read,Show)
-
-parseNetwork :: Get Network
-parseNetwork = do
-  w <- getWord32le
-  case w of
-    0xd9b4bef9 -> return BTCMain
-    0x0709110b -> return BTCTest
-    _          -> fail "parse network failure" 
-
-encodeNetwork :: Network -> Word32
-encodeNetwork BTCMain = 0xd9b4bef9
-encodeNetwork BTCTest = 0x0709110b
-
-instance Binary Network where
-  get = parseNetwork
-  put = putWord32le . encodeNetwork
 
 -----------------------------------------------------------------------------
 
@@ -88,6 +49,8 @@ blockFiles' bd = do
   fs <- getDirectoryContents bd
   let bfs = sort . filter (isPrefixOf "blk") $ fs
   return $ map (bd </>) bfs
+
+-----------------------------------------------------------------------------
 
 getDataDir :: IO FilePath
 getDataDir = case os of
@@ -117,28 +80,6 @@ getDataDir = case os of
 
 -----------------------------------------------------------------------------
 
-data Block' = Block'
-  { _block'Network :: Network
-  , _block'Size :: Word32
-  , _block'Hash :: BlockHash
-  , _block'Block :: Block
-  } deriving Show
-
-parseBlock' :: Get Block'
-parseBlock' = do
-  _block'Network <- parseNetwork
-  _block'Size <- getWord32le
-  _block'Block <- get
-  let _block'Hash = headerHash _block'Block
-  return Block'{..}
-
-instance Binary Block' where
-  get = parseBlock'
-  put Block'{..} = do
-    put _block'Network
-    putWord32le _block'Size
-    put _block'Block
-
 rawBlockP :: FilePath -> Producer BS.ByteString (PS.SafeT IO) ()
 rawBlockP bdir = liftIO (blockFiles' bdir) >>= mconcat . map readFile
 
@@ -152,26 +93,6 @@ blockP :: FilePath -> Producer Block (PS.SafeT IO) ()
 blockP bp = block'P bp >-> P.map _block'Block
 
 -----------------------------------------------------------------------------
-
-data BlockRec a = BlockRec
-  { _blockrecDepth    :: Maybe Int
-  , _blockrecPrevHash :: BlockHash
-  , _blockrecPrevRec  :: Maybe (BlockRec a)
-  , _blockrecData     :: a
-  } deriving Show
-
-type BlockMap a = Map.Map BlockHash (BlockRec a)
-
-data BlockDB a = BlockDB 
-  { _blockdbMap  :: BlockMap a
-  , _blockdbHead :: Maybe (BlockHash,BlockRec a)
-  } deriving Show
-
-newBlockDB :: BlockDB a
-newBlockDB = BlockDB
-  { _blockdbMap  = Map.empty
-  , _blockdbHead = Nothing
-  }
 
 initBlockMap :: NFData a =>
                 FilePath ->
@@ -194,6 +115,8 @@ insertBlockMap bm (bh,ph,d) =
   let br = BlockRec Nothing ph Nothing d
   in  Map.insert bh br bm
 
+-----------------------------------------------------------------------------
+
 updateBlockRec :: BlockDB a -> 
                   BlockHash ->
                   (BlockDB a,BlockRec a)
@@ -204,6 +127,8 @@ updateBlockRec bdb bh =
 
 updateBlockRec' :: BlockDB a -> BlockHash -> BlockDB a
 updateBlockRec' bdb = fst . updateBlockRec bdb
+
+-----------------------------------------------------------------------------
 
 updateDepth :: BlockDB a -> 
                BlockHash ->
@@ -230,6 +155,8 @@ updateDepth bdb bh r =
       hd''         = Just $ maybe (bh,r') (maxBy (_blockrecDepth . snd)  (bh,r')) hd'
       bdb''        = BlockDB m'' hd''
   in  (bdb'',r')
+
+-----------------------------------------------------------------------------
 
 mainChain :: BlockDB a -> Seq (BlockRec a)
 mainChain BlockDB{ _blockdbHead = Nothing }    = S.empty

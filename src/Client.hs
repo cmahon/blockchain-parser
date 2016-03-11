@@ -1,12 +1,11 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Client where
 
 import Data.Monoid
 import Options.Applicative
 import System.Directory
 
-import Bitcoin
+import Bitcoin.Bitcoind
+import Bitcoin.Types
 
 -----------------------------------------------------------------------------
 

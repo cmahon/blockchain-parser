@@ -12,8 +12,10 @@ import GHC.Generics
 import System.Exit
 import Text.Printf
 
-import Bitcoin
+import Bitcoin.Bitcoind
+import Bitcoin.Types
 import Client
+import Types
 
 -----------------------------------------------------------------------------
 
